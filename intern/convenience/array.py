@@ -709,13 +709,14 @@ if HAS_CLOUDVOLUME:
         """
         A volume provider that backends the intern.CloudVolumeRemote API."""
 
-        def __init__(self, cv_config: dict = None):
+        def __init__(self, cv_config: dict = None, resource_config: dict = None):
             self.cv_config = cv_config or {
                 "protocol": "s3",
                 "cloudpath": "",
                 "bucket": "bossdb-open-data",
             }
             self._cv = CloudVolumeRemote(self.cv_config)
+            self.resource_config = resource_config or {}
 
         def get_remote(self):
             return self._cv
@@ -733,6 +734,7 @@ if HAS_CLOUDVOLUME:
             return CloudVolumeResource(
                 self.cv_config["protocol"],
                 f"{self.cv_config['bucket']}/{cloudpath}",
+                **self.resource_config
             )
 
         def get_project(self, resource) -> CloudVolumeResource:
@@ -886,7 +888,7 @@ class Metadata:
         return {k: v for k, v in self.items()}
 
 
-def _infer_volume_provider(channel: Union[ChannelResource, str, Tuple]):
+def _infer_volume_provider(channel: Union[ChannelResource, str, Tuple], cvresource_config: dict=None):
     if isinstance(channel, ChannelResource):
         # Check if the channel is backed by CloudVolume and cloudvolume is installed.
         if channel.raw["storage_type"] == "cloudvol" and HAS_CLOUDVOLUME:
@@ -895,7 +897,8 @@ def _infer_volume_provider(channel: Union[ChannelResource, str, Tuple]):
                     "protocol": "s3",
                     "bucket": channel.raw["bucket"],
                     "cloudpath": channel.raw["cv_path"],
-                }
+                },
+                cvresource_config
             )
         else:
             warnings.warn(
@@ -916,7 +919,8 @@ def _infer_volume_provider(channel: Union[ChannelResource, str, Tuple]):
                         "protocol": "s3",
                         "bucket": channel_obj.raw["bucket"],
                         "cloudpath": channel_obj.raw["cv_path"],
-                    }
+                    },
+                    cvresource_config
                 )
             else:
                 warnings.warn(
@@ -927,7 +931,7 @@ def _infer_volume_provider(channel: Union[ChannelResource, str, Tuple]):
 
         if channel.startswith("s3://") or channel.startswith("precomputed://"):
             if HAS_CLOUDVOLUME:
-                return _CloudVolumeOpenDataVolumeProvider()
+                return _CloudVolumeOpenDataVolumeProvider(None, cvresource_config)
             else:
                 raise ModuleNotFoundError("CloudVolume is not installed.")
     return None
@@ -972,6 +976,7 @@ class array:
         experiment_desc: Optional[str] = None,
         source_channel: Optional[str] = None,
         boss_config: Optional[dict] = None,
+        cvresource_config: Optional[dict] = None,
     ) -> None:
         """
         Construct a new intern-backed array.
@@ -1021,12 +1026,16 @@ class array:
                 use in order to authenticate with a BossDB remote. This option
                 is mutually exclusive with the VolumeProvider configuration. If
                 the `volume_provider` arg is set, this will be ignored.
+            cvresource_config (Optional[dict]): The CloudVolumeResource 
+                configuration dict to use in order to create a cloudvolume object. 
+                If the `volume_provider` arg is set or CloudVolume is not installed, 
+                this will be ignored.
 
         """
         self.axis_order = axis_order
 
         # Handle inferring the remote from the channel:
-        volume_provider = volume_provider or _infer_volume_provider(channel)
+        volume_provider = volume_provider or _infer_volume_provider(channel, cvresource_config)
         if volume_provider is None:
             if boss_config:
                 volume_provider = _BossDBVolumeProvider(BossRemote(boss_config))
